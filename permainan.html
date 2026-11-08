@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Kota Ceria — Game Kehidupan</title>
+<style>
+:root{--ink:#233044;--panel:#fffdf4;--green:#4b9b68;--gold:#ffd45e}
+*{box-sizing:border-box}body{margin:0;background:#182536;color:var(--ink);font-family:system-ui,Segoe UI,sans-serif;overflow:hidden}
+#game{display:block;width:100vw;height:100dvh;background:#80bd76;touch-action:none}
+#hud{position:fixed;inset:10px 10px auto;display:flex;gap:8px;align-items:flex-start;justify-content:space-between;pointer-events:none;flex-wrap:wrap}
+.panel{background:#fffdf0ed;border:2px solid #394a4c;border-radius:14px;padding:8px 11px;box-shadow:0 3px 0 #253b36;font-size:13px;pointer-events:auto}
+#stats{display:flex;gap:10px;align-items:center;font-weight:800;flex-wrap:wrap}
+#actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;max-width:65%}
+button{border:2px solid #354b47;background:#ffe08a;color:#24363b;border-radius:10px;padding:7px 10px;font-weight:800;cursor:pointer;box-shadow:0 2px 0 #354b47}
+button:active{transform:translateY(2px);box-shadow:none}button.green{background:#a8e5a5}button.red{background:#ffb4a4}
+#hint{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);background:#fffdf0e8;border:2px solid #394a4c;border-radius:12px;padding:7px 12px;font-size:12px;font-weight:700;text-align:center;max-width:90vw}
+#modal{position:fixed;inset:0;background:#10202bb8;display:none;align-items:center;justify-content:center;padding:14px;z-index:5}
+.dialog{background:#fffdf2;border:3px solid #354b47;border-radius:18px;padding:18px;width:min(520px,96vw);max-height:85dvh;overflow:auto;box-shadow:0 7px 0 #263a36}
+.dialog h2{margin:0 0 8px}.dialog p{line-height:1.45}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}.item{background:#f4f0d9;border:1px solid #c5c1a7;border-radius:12px;padding:10px}.item button{width:100%;margin-top:6px}
+input{padding:10px;border:2px solid #9b9b82;border-radius:10px;width:100%;font-size:16px;margin:5px 0 10px}
+#chatbox{height:170px;overflow:auto;background:#f1eedc;border-radius:10px;padding:8px;font-size:13px;margin:8px 0}
+#mobile{position:fixed;bottom:65px;left:12px;display:none;gap:6px;pointer-events:auto}
+#mobile button{width:48px;height:46px;font-size:18px;background:#fffdf0dc}
+@media(max-width:700px){#mobile{display:grid;grid-template-columns:repeat(3,48px);grid-template-rows:repeat(2,46px)}#actions{max-width:100%;gap:4px}#actions button{font-size:11px;padding:6px}#stats{font-size:11px}.panel{padding:6px 8px}}
+</style></head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+ <div class="panel" id="stats">❤️ <span id="hp">100</span>　🪙 <span id="coins">2000</span>　🕒 <span id="clock">08:00</span>　☀️ <span id="period">Pagi</span></div>
+ <div class="panel" id="actions">
+  <button onclick="openPanel('tas')">🎒 Tas</button><button onclick="openPanel('shop')">🛍️ Shop</button><button onclick="openPanel('kerja')">💼 Kerja</button><button onclick="openPanel('chat')">💬 Chat</button><button onclick="openPanel('rumah')">🏠 Rumah</button><button onclick="openPanel('kode')">🔑 Kode</button>
+ </div>
+</div>
+<div id="mobile">
+ <span></span><button data-move="up">▲</button><span></span>
+ <button data-move="left">◀</button><button data-move="down">▼</button><button data-move="right">▶</button>
+</div>
+<div id="hint">Gerak: WASD / tombol panah • Dekati bangunan lalu tekan E atau tombol Aksi</div>
+<div id="modal"><div class="dialog"><div id="dialogContent"></div><button style="margin-top:12px" onclick="closePanel()">Tutup ✕</button></div></div>
+<script>
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+let W=innerWidth,H=innerHeight,dpr=Math.min(devicePixelRatio||1,2);
+function resize(){W=innerWidth;H=innerHeight;canvas.width=W*dpr;canvas.height=H*dpr;canvas.style.width=W+'px';canvas.style.height=H+'px';ctx.setTransform(dpr,0,0,dpr,0,0)}addEventListener('resize',resize);resize();
+const world={w:2400,h:1800};
+let player={x:1160,y:900,speed:3.1,hp:100,coins:2000,skin:0,home:false,stall:false,bed:false,food:0,owner:true};
+let cam={x:0,y:0},keys={},near=null,gameMinutes=8*60,last=performance.now(),day=1;
+let owned={house:false,stall:false},furniture=[],inventory=[],chat=[];
+const buildings=[
+ {id:'house1',name:'Rumah Melati',x:850,y:490,w:180,h:130,price:700,type:'house',color:'#e6a36c'},
+ {id:'house2',name:'Rumah Kenanga',x:1370,y:490,w:180,h:130,price:900,type:'house',color:'#e6a36c'},
+ {id:'mall',name:'Mall Ceria',x:1040,y:180,w:330,h:170,type:'mall',color:'#db8db6'},
+ {id:'food',name:'Warung Rasa',x:410,y:780,w:170,h:130,type:'food',color:'#f0bd62'},
+ {id:'stall1',name:'Kios Pasar',x:1760,y:780,w:150,h:120,price:450,type:'stall',color:'#6eb4d6'},
+ {id:'mosque',name:'Masjid Damai',x:1750,y:240,w:190,h:150,type:'mosque',color:'#9dc9a2'},
+ {id:'market',name:'Pasar Malam',x:390,y:1230,w:460,h:190,type:'market',color:'#c58bd6'},
+ {id:'park',name:'Taman Kota',x:1050,y:1250,w:380,h:230,type:'park',color:'#74b77c'}
+];
+let npcs=[];
+const names=['Budi','Siti','Ayu','Pak Rudi','Bu Lina','Doni','Maya','Andi','Ibu Rara','Adik Nino','Pak Joko','Tika','Reno','Bu Wati','Dewi','Fajar'];
+for(let i=0;i<34;i++)npcs.push({x:250+Math.random()*1900,y:400+Math.random()*1200,name:names[i%names.length],color:['#e9a27b','#9fbae8','#e7c66e','#c49be0'][i%4],phase:Math.random()*7});
+let visitors=[];
+function road(x,y,w,h){ctx.fillStyle='#aaa99c';ctx.fillRect(x,y,w,h);ctx.fillStyle='#e9dfbb';if(w>h){for(let i=x+15;i<x+w;i+=48)ctx.fillRect(i,y+h/2-2,24,4)}else{for(let i=y+15;i<y+h;i+=48)ctx.fillRect(x+w/2-2,i,4,24)}}
+function drawBuilding(b){ctx.fillStyle='#0003';ctx.fillRect(b.x+5,b.y+8,b.w,b.h);ctx.fillStyle=b.color;ctx.fillRect(b.x,b.y,b.w,b.h);ctx.fillStyle='#5c4b46';ctx.fillRect(b.x+b.w/2-18,b.y+b.h-42,36,42);ctx.fillStyle='#d8f0f1';for(let i=0;i<3;i++)ctx.fillRect(b.x+18+i*48,b.y+25,28,28);ctx.fillStyle='#fff7df';ctx.font='bold 14px system-ui';ctx.textAlign='center';ctx.fillText(b.name,b.x+b.w/2,b.y-10);ctx.fillStyle='#6d5146';ctx.beginPath();ctx.moveTo(b.x-10,b.y);ctx.lineTo(b.x+b.w/2,b.y-35);ctx.lineTo(b.x+b.w+10,b.y);ctx.fill();
+ if(b.id==='mosque'){ctx.fillStyle='#f6e8bd';ctx.beginPath();ctx.arc(b.x+b.w/2,b.y+8,34,Math.PI,0);ctx.fill();ctx.fillRect(b.x+b.w/2-2,b.y-42,4,20)}
+}
+function drawWorld(){ctx.fillStyle='#83c47d';ctx.fillRect(0,0,world.w,world.h);
+ // blocks and roads
+ road(0,650,world.w,100);road(0,1080,world.w,100);road(700,0,100,world.h);road(1510,0,100,world.h);road(0,350,world.w,75);
+ for(let x=80;x<world.w;x+=180)for(let y=80;y<world.h;y+=170){if(Math.random()<0.002){}ctx.fillStyle='#529e61';ctx.beginPath();ctx.arc(x+25,y+30,13,0,7);ctx.fill();ctx.fillStyle='#6e9b4e';ctx.fillRect(x+22,y+30,6,17)}
+ // houses
+ buildings.forEach(drawBuilding);
+ // mall second floor balcony
+ ctx.fillStyle='#f7d5e5';ctx.fillRect(1100,195,210,40);ctx.fillStyle='#4c4149';ctx.font='bold 12px system-ui';ctx.fillText('LANTAI 2 • DEKORASI',1205,220);
+ // stall counters
+ for(let i=0;i<5;i++){let x=900+i*105;ctx.fillStyle=['#e9a56d','#e7d16e','#de8fb1'][i%3];ctx.fillRect(x,790,78,66);ctx.fillStyle='#fff';ctx.fillRect(x+7,808,64,10);ctx.fillStyle='#654b42';ctx.fillRect(x+34,840,12,16)}
+ // night overlay
+ let hour=gameMinutes/60%24;let darkness=hour>=19||hour<5?0.48:hour>=17?0.2:hour<7?0.18:0;
+ if(darkness){ctx.fillStyle=`rgba(20,31,75,${darkness})`;ctx.fillRect(0,0,world.w,world.h)}
+}
+function drawPerson(x,y,color,scale=1,skin=0){ctx.fillStyle='#0003';ctx.beginPath();ctx.ellipse(x,y+12*scale,9*scale,4*scale,0,0,7);ctx.fill();ctx.fillStyle=color;ctx.fillRect(x-7*scale,y-2*scale,14*scale,17*scale);ctx.fillStyle=['#f0c49d','#d69a75','#8d5b42'][skin%3];ctx.beginPath();ctx.arc(x,y-9*scale,7*scale,0,7);ctx.fill();ctx.fillStyle='#292a35';ctx.fillRect(x-6*scale,y-16*scale,12*scale,5*scale)}
+function draw(){ctx.clearRect(0,0,W,H);cam.x=Math.max(0,Math.min(world.w-W,player.x-W/2));cam.y=Math.max(0,Math.min(world.h-H,player.y-H/2));ctx.save();ctx.translate(-cam.x,-cam.y);drawWorld();npcs.forEach(n=>{drawPerson(n.x,n.y,n.color,.9);});drawPerson(player.x,player.y,['#4c79cc','#dc8a55','#8e62b2','#4c9b76'][player.skin%4],1.15,player.skin);
+ // house ownership marker
+ buildings.forEach(b=>{if(owned.house&&b.type==='house'&&b.id==='house1'){ctx.fillStyle='#ffe16a';ctx.font='bold 14px system-ui';ctx.fillText('🏡 RUMAHKU',b.x+b.w/2,b.y+b.h+20)}});
+ ctx.restore();
+ document.getElementById('hp').textContent=player.hp;document.getElementById('coins').textContent=player.coins===Infinity?'∞':player.coins;document.getElementById('clock').textContent=clockText();document.getElementById('period').textContent=period();
+}
+function clockText(){let m=Math.floor(gameMinutes)%1440;return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0')}
+function period(){let h=gameMinutes/60%24;return h>=5&&h<11?'Pagi':h<15?'Siang':h<18?'Sore':'Malam'}
+function nearest(){let best=null,dist=1e9;for(let b of buildings){let d=Math.hypot(player.x-(b.x+b.w/2),player.y-(b.y+b.h/2));if(d<Math.max(b.w,b.h)/2+65&&d<dist){best=b;dist=d}}return best}
+function tick(t){let dt=Math.min((t-last)/16.67,3);last=t;gameMinutes+=dt*.11;if(gameMinutes>=1440){gameMinutes-=1440;day++}
+ let dx=(keys.right?1:0)-(keys.left?1:0),dy=(keys.down?1:0)-(keys.up?1:0);let len=Math.hypot(dx,dy)||1;player.x=Math.max(20,Math.min(world.w-20,player.x+dx/len*player.speed*dt));player.y=Math.max(20,Math.min(world.h-20,player.y+dy/len*player.speed*dt));
+ npcs.forEach(n=>{n.phase+=.006*dt;n.x+=Math.sin(n.phase)*.4*dt;n.y+=Math.cos(n.phase*.7)*.25*dt});
+ let h=gameMinutes/60%24;if(Math.abs(h-15)<.012&&Math.random()<.2)notify('🔔 Jam 15.00! Waktunya warga berangkat ke kios.');if(Math.abs(h-22)<.012&&Math.random()<.2)notify('🔔 Jam 22.00! Waktunya warga pulang.');
+ near=nearest();document.getElementById('hint').textContent=near?`Dekat: ${near.name} • Tekan E untuk masuk / berinteraksi`:'Gerak: WASD / tombol panah • Dekati bangunan lalu tekan E';draw();requestAnimationFrame(tick)}
+requestAnimationFrame(tick);
+addEventListener('keydown',e=>{let k=e.key.toLowerCase();if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k))e.preventDefault();if(k==='w'||k==='arrowup')keys.up=true;if(k==='s'||k==='arrowdown')keys.down=true;if(k==='a'||k==='arrowleft')keys.left=true;if(k==='d'||k==='arrowright')keys.right=true;if(k==='e')interact();if(k==='escape')closePanel()});
+addEventListener('keyup',e=>{let k=e.key.toLowerCase();if(k==='w'||k==='arrowup')keys.up=false;if(k==='s'||k==='arrowdown')keys.down=false;if(k==='a'||k==='arrowleft')keys.left=false;if(k==='d'||k==='arrowright')keys.right=false});
+document.querySelectorAll('[data-move]').forEach(b=>{let k=b.dataset.move;b.addEventListener('pointerdown',e=>{e.preventDefault();keys[k]=true});['pointerup','pointerleave','pointercancel'].forEach(ev=>b.addEventListener(ev,()=>keys[k]=false))});
+function notify(s){document.getElementById('hint').textContent=s;setTimeout(()=>{document.getElementById('hint').textContent=near?`Dekat: ${near.name} • Tekan E untuk masuk / berinteraksi`:'Gerak: WASD / tombol panah • Dekati bangunan lalu tekan E'},2600)}
+function openPanel(which){let c=document.getElementById('dialogContent'),title='',body='';
+if(which==='kode'){title='Kode Kota / Multiplayer';body=`<p>Buat kode kota untuk teman, atau masukkan kode teman untuk bergabung.</p><button class="green" onclick="makeCode()">Buat Kode Kota</button><div id="codeOut"></div><label>Kode teman</label><input id="joinCode" placeholder="Contoh: KOTA-1234"><button onclick="joinCode()">Gabung Kota</button><p><small>Mode demo: kode dan bergabung tersimpan di perangkat ini. Multiplayer lintas HP membutuhkan server online agar pemain benar-benar bertemu.</small></p>`}
+if(which==='shop'){title='Shop Dekorasi & Makanan';body=`<p>Belanja untuk rumah dan isi perut. Koin akan berkurang saat membeli.</p><div class="grid">${[['🛏️ Kasur empuk',250,'bed'],['🪑 Kursi',90,'Kursi'],['🛋️ Sofa',180,'Sofa'],['🌵 Tanaman',60,'Tanaman'],['🖼️ Lukisan',75,'Lukisan'],['💡 Lampu',50,'Lampu'],['🍗 Ayam panggang',35,'food'],['🌭 Sosis',25,'food'],['🍜 Mi ayam',40,'food'],['🧃 Jus',20,'food'],['🧸 Boneka',80,'Boneka'],['📺 TV',300,'TV']].map(a=>`<div class="item">${a[0]}<br><b>${a[1]} koin</b><button onclick="buy('${a[2]}',${a[1]})">Beli</button></div>`).join('')}</div>`}
+if(which==='kerja'){title='Pekerjaan';body=`<p>Lakukan pekerjaan untuk mendapatkan koin.</p><div class="grid"><div class="item">🧹 Bersihkan taman<br>Upah 120 koin<button onclick="work(120)">Kerjakan</button></div><div class="item">📦 Antar paket<br>Upah 180 koin<button onclick="work(180)">Kerjakan</button></div><div class="item">🍜 Bantu warung<br>Upah 150 koin<button onclick="work(150)">Kerjakan</button></div><div class="item">🛍️ Jaga kios<br>Upah 200 koin<button onclick="work(200)">Kerjakan</button></div></div>`}
+if(which==='rumah'){title='Rumah & Dekorasi';body=`<p>Rumah pertama dapat dibeli di Rumah Melati. Dekorasi yang dibeli bisa dipasang di rumah.</p><p>Perabot dimiliki: ${inventory.length?inventory.join(', '):'Belum ada'}.</p><button onclick="sleep()">🛏️ Tidur (+35 hati)</button> <button onclick="decorate()">🪴 Pasang dekorasi</button><p><b>Lantai 2:</b> Dekorasi lantai dua tersedia setelah punya rumah. Gunakan shop untuk membeli perabot.</p>`}
+if(which==='tas'){title='Tas & Karakter';body=`<p>Barang: ${inventory.length?inventory.join(', '):'Kosong'}</p><p>Ganti karakter:</p><div class="grid">${['Biru','Oranye','Ungu','Hijau'].map((n,i)=>`<div class="item">Karakter ${n}<button onclick="changeSkin(${i})">Pilih</button></div>`).join('')}</div>`}
+if(which==='chat'){title='Chat Kota';body=`<p>Ngobrol dengan warga kota atau tulis pesan.</p><div id="chatbox">${chat.map(x=>`<div>${x}</div>`).join('')||'Belum ada pesan.'}</div><input id="chatInput" placeholder="Tulis pesan..."><button onclick="sendChat()">Kirim</button><div class="grid"><button onclick="npcTalk()">Sapa warga terdekat</button></div>`}
+c.innerHTML=`<h2>${title}</h2>${body}`;document.getElementById('modal').style.display='flex'}
+function closePanel(){document.getElementById('modal').style.display='none'}
+function buy(item,price){if(player.coins<price){notify('Koin tidak cukup!');return}player.coins-=price;inventory.push(item==='food'?'Makanan':item);if(item==='bed')player.bed=true;notify('Berhasil membeli!');openPanel('shop')}
+function work(n){player.coins+=n;notify(`Kerja selesai! +${n} koin`);openPanel('kerja')}
+function sleep(){if(!owned.house){notify('Beli rumah dulu di Rumah Melati!');return}player.hp=Math.min(100,player.hp+35);gameMinutes=(gameMinutes+480)%1440;notify('Kamu tidur nyenyak. Hati bertambah!');closePanel()}
+function decorate(){if(!owned.house){notify('Beli rumah dulu!');return}if(!inventory.length){notify('Beli dekorasi di Shop dulu.');return}let item=inventory.pop();furniture.push(item);notify(item+' dipasang di rumah!');openPanel('rumah')}
+function changeSkin(i){player.skin=i;notify('Karakter berhasil diganti.');closePanel()}
+function sendChat(){let v=document.getElementById('chatInput').value.trim();if(v){chat.push('Kamu: '+v);openPanel('chat')}}
+function npcTalk(){let n=npcs.reduce((a,b)=>Math.hypot(a.x-player.x,a.y-player.y)<Math.hypot(b.x-player.x,b.y-player.y)?a:b);chat.push(n.name+': Halo! Selamat datang di Kota Ceria. Mau lihat daganganku?');openPanel('chat')}
+function makeCode(){let code='KOTA-'+Math.floor(1000+Math.random()*9000);localStorage.setItem('ceriaCode',code);document.getElementById('codeOut').innerHTML=`<p>Kode kota kamu: <b>${code}</b></p><button onclick="navigator.clipboard?.writeText('${code}')">Salin kode</button>`}
+function joinCode(){let code=document.getElementById('joinCode').value.trim().toUpperCase();if(!code){notify('Masukkan kode dulu.');return}notify('Kode '+code+' diterima dalam mode demo.');closePanel()}
+function interact(){if(!near){notify('Dekati rumah, kios, mall, warung, atau masjid dulu.');return}
+if(near.type==='house'){if(near.id==='house1'&&owned.house){openPanel('rumah');return}let price=near.price;if(player.coins<price){notify('Koin tidak cukup untuk membeli rumah.');return}if(confirm(`Beli ${near.name} seharga ${price} koin?`)){player.coins-=price;owned.house=true;notify('Selamat! Rumah ini sekarang milikmu.')}} 
+else if(near.type==='food'){let a=prompt('Menu warung: 1 Mi ayam (40), 2 Sosis (25), 3 Ayam (35). Ketik 1, 2, atau 3');let cost={'1':40,'2':25,'3':35}[a];if(cost){if(player.coins>=cost){player.coins-=cost;player.hp=Math.min(100,player.hp+20);notify('Makanan siap! Hati bertambah.')}else notify('Koin tidak cukup.')}} 
+else if(near.type==='stall'){if(!owned.stall){if(player.coins>=near.price&&confirm('Beli kios seharga 450 koin?')){player.coins-=near.price;owned.stall=true;notify('Kios menjadi milikmu!')}else notify('Kios ini dijual seharga 450 koin.')}else{let name=prompt('Beri nama dagangan kiosmu:','Jajanan Ceria');if(name)notify('Kios '+name+' siap melayani warga!')}} 
+else if(near.type==='mall'){openPanel('shop')}
+else if(near.type==='market'){openPanel('shop')}
+else if(near.type==='mosque'){if(confirm('Masuk masjid dan salat?')){player.hp=Math.min(100,player.hp+10);notify('Kamu selesai salat. Hati +10.')}}else notify('Kamu sedang berada di taman kota.')}
+canvas.addEventListener('pointerdown',e=>{if(document.getElementById('modal').style.display==='flex')return;let rect=canvas.getBoundingClientRect(),x=e.clientX,y=e.clientY; if(Math.abs(x-W/2)<100&&Math.abs(y-H/2)<100)interact()});
+addEventListener('keydown',e=>{if(e.key.toLowerCase()==='e'&&document.getElementById('modal').style.display==='flex')return});
+</script></body></html>
